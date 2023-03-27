@@ -1,0 +1,14 @@
+apiVersion: v1
+entries:
+  kube-ovn:
+  - apiVersion: v2
+    appVersion: 1.12.0
+    created: "2023-03-31T09:33:28.974898+08:00"
+    description: Helm chart for Kube-OVN
+    digest: 285f920995c226384870082d2f7425f27584e9dcd67efa8825f5457b45beffc0
+    name: kube-ovn
+    type: application
+    urls:
+    - https://hongzhen-ma.github.io/charts/kube-ovn-0.1.0.tgz
+    version: 0.1.0
+generated: "2023-03-31T09:33:28.973358+08:00"
