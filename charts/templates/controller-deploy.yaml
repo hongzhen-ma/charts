@@ -29,6 +29,15 @@ spec:
         - key: CriticalAddonsOnly
           operator: Exists
       affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - preference:
+                matchExpressions:
+                  - key: "ovn.kubernetes.io/ic-gw"
+                    operator: NotIn
+                    values:
+                      - "true"
+              weight: 100
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             - labelSelector:
@@ -61,8 +70,8 @@ spec:
           {{- else if eq .Values.networking.NET_STACK "ipv6" -}}
           {{ .Values.ipv6.POD_GATEWAY }}
           {{- end }}
-          - --default-gateway-check={{- .Values.func.CHECK_GATEWAY }}
-          - --default-logical-gateway={{- .Values.func.LOGICAL_GATEWAY }}
+          - --default-gateway-check={{- .Values.cni_conf.CHECK_GATEWAY }}
+          - --default-logical-gateway={{- .Values.cni_conf.LOGICAL_GATEWAY }}
           - --default-u2o-interconnection={{- .Values.func.U2O_INTERCONNECTION }}
           - --default-exclude-ips={{- .Values.networking.EXCLUDE_IPS }}
           - --cluster-router={{ .Values.networking.DEFAULT_VPC }}
@@ -90,6 +99,7 @@ spec:
           - --default-vlan-name={{- .Values.networking.vlan.VLAN_NAME }}
           - --default-vlan-id={{- .Values.networking.vlan.VLAN_ID }}
           - --ls-dnat-mod-dl-dst={{- .Values.func.LS_DNAT_MOD_DL_DST }}
+          - --ls-ct-skip-dst-lport-ips={{- .Values.func.LS_CT_SKIP_DST_LPORT_IPS }}
           - --pod-nic-type={{- .Values.networking.POD_NIC_TYPE }}
           - --enable-lb={{- .Values.func.ENABLE_LB }}
           - --enable-np={{- .Values.func.ENABLE_NP }}
@@ -106,6 +116,7 @@ spec:
           - --keep-vm-ip={{- .Values.func.ENABLE_KEEP_VM_IP }}
           - --pod-default-fip-type={{- .Values.networking.POD_DEFAULT_FIP_TYPE }}
           - --enable-metrics={{- .Values.networking.ENABLE_METRICS }}
+          - --node-local-dns-ip={{- .Values.networking.NODE_LOCAL_DNS_IP }}
           env:
             - name: ENABLE_SSL
               value: "{{ .Values.networking.ENABLE_SSL }}"
@@ -132,8 +143,12 @@ spec:
           volumeMounts:
             - mountPath: /etc/localtime
               name: localtime
+              readOnly: true
             - mountPath: /var/log/kube-ovn
               name: kube-ovn-log
+            # ovn-ic log directory
+            - mountPath: /var/log/ovn
+              name: ovn-log
             - mountPath: /var/run/tls
               name: kube-ovn-tls
           readinessProbe:
@@ -152,11 +167,21 @@ spec:
             timeoutSeconds: 45
           resources:
             requests:
+            {{- if .Release.IsUpgrade }}
+              cpu: {{ (index (lookup "apps/v1" "Deployment" "kube-system" "kube-ovn-controller").spec.template.spec.containers 0).resources.requests.cpu | quote }}
+              memory: {{ (index (lookup "apps/v1" "Deployment" "kube-system" "kube-ovn-controller").spec.template.spec.containers 0).resources.requests.memory | quote }}
+            {{- else }}
               cpu: {{ index .Values "kube-ovn-controller" "requests" "cpu" }}
               memory: {{ index .Values "kube-ovn-controller" "requests" "memory" }}
+            {{- end }}
             limits:
+            {{- if .Release.IsUpgrade }}
+              cpu: {{ (index (lookup "apps/v1" "Deployment" "kube-system" "kube-ovn-controller").spec.template.spec.containers 0).resources.limits.cpu | quote }}
+              memory: {{ (index (lookup "apps/v1" "Deployment" "kube-system" "kube-ovn-controller").spec.template.spec.containers 0).resources.limits.memory | quote }}
+            {{- else }}
               cpu: {{ index .Values "kube-ovn-controller" "limits" "cpu" }}
               memory: {{ index .Values "kube-ovn-controller" "limits" "memory" }}
+            {{- end }}
       nodeSelector:
         kubernetes.io/os: "linux"
       volumes:
@@ -165,7 +190,10 @@ spec:
             path: /etc/localtime
         - name: kube-ovn-log
           hostPath:
-            path: /var/log/kube-ovn
+            path: {{ .Values.log_conf.LOG_DIR }}/kube-ovn
+        - name: ovn-log
+          hostPath:
+            path: {{ .Values.log_conf.LOG_DIR }}/ovn
         - name: kube-ovn-tls
           secret:
             optional: true

@@ -25,7 +25,7 @@ spec:
         - key: CriticalAddonsOnly
           operator: Exists
       priorityClassName: system-node-critical
-      serviceAccountName: ovn
+      serviceAccountName: kube-ovn-cni
       hostNetwork: true
       hostPID: true
       initContainers:
@@ -52,7 +52,6 @@ spec:
           - --enable-mirror={{- .Values.debug.ENABLE_MIRROR }}
           - --mirror-iface={{- .Values.debug.MIRROR_IFACE }}
           - --node-switch={{ .Values.networking.NODE_SUBNET }}
-          - --node-local-dns-ip={{ .Values.networking.NODE_LOCAL_DNS_IP }}
           - --encap-checksum=true
           - --service-cluster-ip-range=
           {{- if eq .Values.networking.NET_STACK "dual_stack" -}}
@@ -78,6 +77,9 @@ spec:
           - --log_file=/var/log/kube-ovn/kube-ovn-cni.log
           - --log_file_max_size=0
           - --enable-metrics={{- .Values.networking.ENABLE_METRICS }}
+          - --kubelet-dir={{ .Values.kubelet_conf.KUBELET_DIR }}
+          - --enable-tproxy={{ .Values.func.ENABLE_TPROXY }}
+          - --ovs-vsctl-concurrency={{ .Values.performance.OVS_VSCTL_CONCURRENCY }}
         securityContext:
           runAsUser: 0
           privileged: true
@@ -102,14 +104,17 @@ spec:
                 fieldPath: status.podIPs
           - name: ENABLE_BIND_LOCAL_IP
             value: "{{- .Values.func.ENABLE_BIND_LOCAL_IP }}"
+          - name: DBUS_SYSTEM_BUS_ADDRESS
+            value: "unix:path=/host/var/run/dbus/system_bus_socket"
         volumeMounts:
           - name: host-modules
             mountPath: /lib/modules
             readOnly: true
           - name: shared-dir
-            mountPath: /var/lib/kubelet/pods
+            mountPath: {{ .Values.kubelet_conf.KUBELET_DIR }}/pods
           - mountPath: /etc/openvswitch
             name: systemid
+            readOnly: true
           - mountPath: /etc/cni/net.d
             name: cni-conf
           - mountPath: /run/openvswitch
@@ -117,6 +122,9 @@ spec:
             mountPropagation: Bidirectional
           - mountPath: /run/ovn
             name: host-run-ovn
+          - mountPath: /host/var/run/dbus
+            name: host-dbus
+            mountPropagation: HostToContainer
           - mountPath: /var/run/netns
             name: host-ns
             mountPropagation: HostToContainer
@@ -128,6 +136,7 @@ spec:
             name: host-log-ovn
           - mountPath: /etc/localtime
             name: localtime
+            readOnly: true
           - mountPath: /tmp
             name: tmp
         readinessProbe:
@@ -147,11 +156,21 @@ spec:
           timeoutSeconds: 3
         resources:
           requests:
+          {{- if .Release.IsUpgrade }}
+            cpu: {{ (index (lookup "apps/v1" "DaemonSet" "kube-system" "kube-ovn-cni").spec.template.spec.containers 0).resources.requests.cpu | quote }}
+            memory: {{ (index (lookup "apps/v1" "DaemonSet" "kube-system" "kube-ovn-cni").spec.template.spec.containers 0).resources.requests.memory | quote }}
+          {{- else }}
             cpu: {{ index .Values "kube-ovn-cni" "requests" "cpu" }}
             memory: {{ index .Values "kube-ovn-cni" "requests" "memory" }}
+          {{- end }}
           limits:
+          {{- if .Release.IsUpgrade }}
+            cpu: {{ (index (lookup "apps/v1" "DaemonSet" "kube-system" "kube-ovn-cni").spec.template.spec.containers 0).resources.limits.cpu | quote }}
+            memory: {{ (index (lookup "apps/v1" "DaemonSet" "kube-system" "kube-ovn-cni").spec.template.spec.containers 0).resources.limits.memory | quote }}
+          {{- else }}
             cpu: {{ index .Values "kube-ovn-cni" "limits" "cpu" }}
             memory: {{ index .Values "kube-ovn-cni" "limits" "memory" }}
+          {{- end }}
       nodeSelector:
         kubernetes.io/os: "linux"
       volumes:
@@ -179,18 +198,21 @@ spec:
         - name: host-ns
           hostPath:
             path: /var/run/netns
+        - name: host-dbus
+          hostPath:
+            path: /var/run/dbus
         - name: kube-ovn-log
           hostPath:
-            path: /var/log/kube-ovn
+            path: {{ .Values.log_conf.LOG_DIR }}/kube-ovn
         - name: localtime
           hostPath:
             path: /etc/localtime
         - name: host-log-ovs
           hostPath:
-            path: /var/log/openvswitch
+            path: {{ .Values.log_conf.LOG_DIR }}/openvswitch
         - name: host-log-ovn
           hostPath:
-            path: /var/log/ovn
+            path: {{ .Values.log_conf.LOG_DIR }}/ovn
         - name: tmp
           hostPath:
             path: /tmp
